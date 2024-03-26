@@ -1,0 +1,93 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+)
+
+type TON struct {
+	Status struct {
+		Timestamp    time.Time `json:"timestamp"`
+		ErrorCode    int       `json:"error_code"`
+		ErrorMessage string    `json:"error_message"`
+		Elapsed      int       `json:"elapsed"`
+		CreditCount  int       `json:"credit_count"`
+		Notice       string    `json:"notice"`
+	} `json:"status"`
+	Data struct {
+		TON struct {
+			ID     int    `json:"id"`
+			Name   string `json:"name"`
+			Symbol string `json:"symbol"`
+			Quote  struct {
+				USD struct {
+					Price       float64   `json:"price"`
+					LastUpdated time.Time `json:"last_updated"`
+				} `json:"USD"`
+			} `json:"quote"`
+		} `json:"TON"`
+	} `json:"data"`
+}
+
+func main() {
+	bot, err := tgbotapi.NewBotAPI("tgbot token")
+	if err != nil {
+		log.Panic(err)
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=TON&convert=USD", nil)
+	if err != nil {
+		log.Print(err)
+	}
+
+	req.Header.Add("Accepts", "application/json")
+	req.Header.Add("X-CMC_PRO_API_KEY", "token from coinmarket")
+
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates, err := bot.GetUpdatesChan(u)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	var lastCommandTimestamp = make(map[int]int64)
+
+	for update := range updates {
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Print(err)
+		}
+		var response TON
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		if err != nil {
+			log.Print(err)
+		}
+		price := response.Data.TON.Quote.USD.Price
+		if update.Message.Command() == "price" {
+			userID := update.Message.From.ID
+			lastTimestamp, exists := lastCommandTimestamp[userID]
+			if exists && time.Now().Unix()-lastTimestamp < 10 {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Please wait at least 10 seconds before using the /price command again.")
+				_, err = bot.Send(msg)
+				if err != nil {
+					log.Print(err)
+				}
+			} else {
+				lastCommandTimestamp[userID] = time.Now().Unix()
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Current TON price: $%.5f", price))
+				_, err = bot.Send(msg)
+				if err != nil {
+					log.Print(err)
+				}
+			}
+		} else {
+			continue
+		}
+	}
+}
