@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -35,7 +36,7 @@ type TON struct {
 }
 
 func main() {
-	bot, err := tgbotapi.NewBotAPI("tgbot token")
+	bot, err := tgbotapi.NewBotAPI("tgBotToken")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -47,7 +48,7 @@ func main() {
 	}
 
 	req.Header.Add("Accepts", "application/json")
-	req.Header.Add("X-CMC_PRO_API_KEY", "token from coinmarket")
+	req.Header.Add("X-CMC_PRO_API_KEY", "yourApiToken")
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -57,6 +58,7 @@ func main() {
 	}
 
 	var lastCommandTimestamp = make(map[int]int64)
+	go priceChangeRoutine(bot, client, req)
 
 	for update := range updates {
 		resp, err := client.Do(req)
@@ -87,7 +89,44 @@ func main() {
 				}
 			}
 		} else {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Unknown command.")
+			_, err = bot.Send(msg)
+			if err != nil {
+				log.Print(err)
+			}
 			continue
 		}
+	}
+}
+func priceChangeRoutine(bot *tgbotapi.BotAPI, client *http.Client, req *http.Request) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	var previousPrice float64
+
+	for range ticker.C {
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+
+		var response TON
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+
+		newPrice := response.Data.TON.Quote.USD.Price
+
+		if previousPrice != 0 && math.Abs(newPrice-previousPrice) >= 0.01 {
+			msg := tgbotapi.NewMessage(1234, fmt.Sprintf("Current TON price: $%.5f", newPrice)) //change 1234 to your ChatID
+			_, err := bot.Send(msg)
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+		}
+		previousPrice = newPrice
 	}
 }
